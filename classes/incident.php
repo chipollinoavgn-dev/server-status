@@ -75,21 +75,20 @@ class Incident implements JsonSerializable
   }
 
   /**
-   * Processes submitted form and adds incident unless problem is encountered,
+   * Processes data form and adds incident unless problem is encountered,
    * calling this is possible only for admin or higher rank. Also checks requirements
    * for char limits.
    * @return void
    */
-  public static function add()
+  public static function addFromPing($type,$title,$text,$service)
   {
     global $mysqli, $message;
     //Sould be a better way to get this array...
     $statuses = array(_("Major outage"), _("Minor outage"), _("Planned maintenance"), _("Operational") );
 
-    $user_id = $_SESSION['user'];
-    $type = $_POST['type'];
-    $title = strip_tags($_POST['title']);
-    $text = strip_tags($_POST['text'], '<br>');
+    $user_id = 1;
+    $title = strip_tags($title);
+    $text = strip_tags($text, '<br>');
 
     if (strlen($title)==0)
     {
@@ -159,12 +158,10 @@ class Incident implements JsonSerializable
       $query = $stmt->get_result();
       $status_id = $mysqli->insert_id;
 
-      foreach ($services as $service) {
         $stmt = $mysqli->prepare("INSERT INTO services_status VALUES (NULL,?, ?)");
         $stmt->bind_param("ii", $service, $status_id);
         $stmt->execute();
         $query = $stmt->get_result();
-      }
 
       // Perform notification to subscribers
       $notify = new Notification();
@@ -181,6 +178,114 @@ class Incident implements JsonSerializable
       header("Location: ".WEB_URL."/admin?sent=true");
     }
   }
+
+    /**
+     * Processes submitted form and adds incident unless problem is encountered,
+     * calling this is possible only for admin or higher rank. Also checks requirements
+     * for char limits.
+     * @return void
+     */
+    public static function add()
+    {
+        global $mysqli, $message;
+        //Sould be a better way to get this array...
+        $statuses = array(_("Major outage"), _("Minor outage"), _("Planned maintenance"), _("Operational") );
+
+        $user_id = $_SESSION['user'];
+        $type = $_POST['type'];
+        $title = strip_tags($_POST['title']);
+        $text = strip_tags($_POST['text'], '<br>');
+
+        if (strlen($title)==0)
+        {
+            $message = _("Please enter title");
+            return;
+        }else if(strlen($title)>50){
+            $message = _("Title too long! Character limit is 50");
+            return;
+        }
+
+        if (strlen($title)==0)
+        {
+            $message = _("Please enter text");
+            return;
+        }
+
+        if ($type == 2 && (!strlen(trim($_POST['time'])) || !strlen(trim($_POST['end_time']))))
+        {
+            $message = _("Please set start and end time! Use ISO 8601 format.");
+            return;
+        }
+
+        if (empty($_POST['services'])){
+            $message = _("Please select at least one service");
+        }
+        else
+        {
+            if (!is_array($_POST['services']))
+            {
+                $services = array($_POST['services']);
+            }
+            else
+            {
+                $services = $_POST['services'];
+            }
+
+            if (!empty($_POST['time']) && $type == 2){
+                $input_time = (!empty($_POST['time_js'])?$_POST['time_js']: $_POST['time']);
+                $input_end_time = (!empty($_POST['end_time_js'])?$_POST['end_time_js']: $_POST['end_time']);
+                $time = strtotime($input_time);
+                $end_time = strtotime($input_end_time);
+                if (!$time)
+                {
+                    $message = _("Start date format is not recognized. Please use ISO 8601 format.");
+                    return;
+                }
+
+                if (!$end_time)
+                {
+                    $message = _("End date format is not recognized. Please use ISO 8601 format.");
+                    return;
+                }
+
+                if ($time >= $end_time)
+                {
+                    $message = _("End time is either the same or earlier than start time!");
+                    return;
+                }
+            }else{
+                $time = time();
+                $end_time = '';
+            }
+
+            $stmt = $mysqli->prepare("INSERT INTO status VALUES (NULL,?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("issiii", $type, $title, $text, $time ,$end_time ,$user_id);
+            $stmt->execute();
+            $query = $stmt->get_result();
+            $status_id = $mysqli->insert_id;
+
+            foreach ($services as $service) {
+                $stmt = $mysqli->prepare("INSERT INTO services_status VALUES (NULL,?, ?)");
+                $stmt->bind_param("ii", $service, $status_id);
+                $stmt->execute();
+                $query = $stmt->get_result();
+            }
+
+            // Perform notification to subscribers
+            $notify = new Notification();
+            $notify->populate_impacted_services($status_id);
+
+            $notify->type = $type;
+            $notify->time = $time;
+            $notify->title = $title;
+            $notify->text = $text;
+            $notify->status = $statuses[$type];
+
+            $notify->notify_subscribers();
+
+            header("Location: ".WEB_URL."/admin?sent=true");
+        }
+    }
 
   /**
    * Renders incident
