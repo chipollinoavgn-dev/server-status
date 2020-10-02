@@ -58,8 +58,8 @@ class Template{
       <html lang="en">
       <head>
        <?php
-        $headfile = fopen("head.txt", "r") or die("Unable to open head.txt!");
-        $head_additionalcode = fread($versionfile,filesize("head.txt"));
+        $headfile = fopen("head.txt", "r");
+        $head_additionalcode = fread($headfile,filesize("head.txt"));
         fclose($headfile); ?>
         <meta charset="utf-8">
         <title><?php echo $page_name." - ".NAME ?></title>
